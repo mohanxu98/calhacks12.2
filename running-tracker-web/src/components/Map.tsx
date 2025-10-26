@@ -292,11 +292,11 @@ export default function Map({ center, zoom, runState, onPositionUpdate, drawnSha
       const target = Math.max(1, targetDistance)
 
       // Initial guess
-      const initialFactor = Math.min(5, Math.max(0.2, target / baseDistance))
+      const initialFactor = Math.min(10, Math.max(0.05, target / baseDistance))
 
-      // Establish bracket [lo, hi]
-      let lo = Math.max(0.2, initialFactor * 0.5)
-      let hi = Math.min(5, initialFactor * 1.5)
+      // Establish bracket [lo, hi] (wider and lower floor to allow small targets)
+      let lo = Math.max(0.05, initialFactor * 0.5)
+      let hi = Math.min(10, initialFactor * 2)
       const evalDist = async (f: number) => {
         const scaled = scalePointsAround(basePoints, center, f)
         const res = await getShapeRoute(scaled)
@@ -308,8 +308,8 @@ export default function Map({ center, zoom, runState, onPositionUpdate, drawnSha
 
       // Try to widen bracket if target not between
       for (let i = 0; i < 3 && !((loEval.dist <= target && hiEval.dist >= target) || (loEval.dist >= target && hiEval.dist <= target)); i++) {
-        lo = Math.max(0.2, lo * 0.5)
-        hi = Math.min(5, hi * 1.5)
+        lo = Math.max(0.05, lo * 0.5)
+        hi = Math.min(10, hi * 1.8)
         loEval = await evalDist(lo)
         hiEval = await evalDist(hi)
       }

@@ -1,4 +1,4 @@
-# Running Tracker
+# Runr
 
 A modern, full-featured running tracker web application built with Next.js, TypeScript, and OpenStreetMap. Track your runs with GPS, view detailed statistics, and analyze your progress over time.
 

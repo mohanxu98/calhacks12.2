@@ -29,15 +29,18 @@ export function RunControls({ isRunning, onStart, onStop }: RunControlsProps) {
       {!isRunning ? (
         <button
           onClick={onStart}
-          className="btn-primary px-8 py-3 text-lg font-semibold"
+          className="inline-flex items-center gap-2 px-6 sm:px-8 py-3 rounded-full bg-blue-600 text-white text-base sm:text-lg font-semibold shadow-sm hover:bg-blue-700 active:translate-y-[1px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 transition"
         >
+          <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path d="M6.5 5.5v9l8-4.5-8-4.5z" />
+          </svg>
           Start Run
         </button>
       ) : (
         <>
           <button
             onClick={handleStopClick}
-            className="btn-danger px-8 py-3 text-lg font-semibold"
+            className="inline-flex items-center gap-2 px-6 sm:px-8 py-3 rounded-full bg-red-600 text-white text-base sm:text-lg font-semibold shadow-sm hover:bg-red-700 active:translate-y-[1px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-red-500 transition"
           >
             Stop Run
           </button>

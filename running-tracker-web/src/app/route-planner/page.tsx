@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { useRouter } from 'next/navigation'
 
 interface Coordinate {
   lat: number
@@ -47,7 +46,8 @@ declare namespace google {
       constructor(lat: number, lng: number)
     }
     enum TravelMode {
-      WALKING
+      WALKING,
+      BICYCLING
     }
     enum MapTypeId {
       ROADMAP
@@ -98,17 +98,46 @@ declare namespace google {
 }
 
 export default function RoutePlanner() {
-  const router = useRouter()
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<google.maps.Map | null>(null)
   const directionsServiceRef = useRef<google.maps.DirectionsService | null>(null)
   const directionsRendererRef = useRef<google.maps.DirectionsRenderer | null>(null)
+  const startMarkerRef = useRef<any | null>(null)
+  const endMarkerRef = useRef<any | null>(null)
+  const selectionModeRef = useRef<'start' | 'end' | null>(null)
   
   const [startCoord, setStartCoord] = useState<Coordinate>({ lat: 37.7749, lng: -122.4194 }) // San Francisco
   const [endCoord, setEndCoord] = useState<Coordinate>({ lat: 37.7849, lng: -122.4094 }) // Nearby point
   const [routeInfo, setRouteInfo] = useState<RouteInfo | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [selectionMode, setSelectionMode] = useState<'start' | 'end' | null>(null)
+  const [mode, setMode] = useState<'WALKING' | 'BICYCLING'>('WALKING')
+  // Clean up Google HTML instructions and add punctuation where needed
+  const sanitizeInstruction = (html: string): string => {
+    if (!html) return ''
+    let text = html
+      .replace(/<br\s*\/?>/gi, ' ')
+      .replace(/<div[^>]*>/gi, ' ')
+      .replace(/<\/div>/gi, ' ')
+      .replace(/<[^>]*>/g, ' ')
+    text = text.replace(/\s+/g, ' ').trim()
+
+    // Ensure common bike/walk phrases are separated
+    const punctuateBefore = [
+      'Walk your bicycle',
+      'Continue to follow',
+      'Pass by',
+    ]
+    punctuateBefore.forEach((phrase) => {
+      const re = new RegExp(`(?<![.!?])\s*${phrase}`, 'i')
+      // Insert a period + space before the phrase if not already punctuated
+      text = text.replace(re, `. ${phrase}`)
+    })
+
+    return text
+  }
+
 
   // Initialize Google Maps
   useEffect(() => {
@@ -141,6 +170,19 @@ export default function RoutePlanner() {
         directionsRendererRef.current = new google.maps.DirectionsRenderer({
           draggable: true,
           map: map
+        })
+
+        // Add click to set start/end
+        ;(map as any).addListener('click', (e: any) => {
+          const mode = selectionModeRef.current
+          if (!mode || !e || !e.latLng) return
+          const lat = e.latLng.lat()
+          const lng = e.latLng.lng()
+          if (mode === 'start') {
+            setStartCoord({ lat, lng })
+          } else if (mode === 'end') {
+            setEndCoord({ lat, lng })
+          }
         })
 
         // Add event listener for when route is changed by dragging
@@ -199,13 +241,49 @@ export default function RoutePlanner() {
     }
   }, [])
 
+  // Keep ref in sync for click handler
+  useEffect(() => {
+    selectionModeRef.current = selectionMode
+  }, [selectionMode])
+
+  // Update or create start/end markers when coords change
+  useEffect(() => {
+    const map = mapInstanceRef.current as any
+    if (!map || !(window as any).google) return
+    const gmaps = (window as any).google.maps
+    if (startMarkerRef.current) {
+      startMarkerRef.current.setPosition(new gmaps.LatLng(startCoord.lat, startCoord.lng))
+    } else {
+      startMarkerRef.current = new gmaps.Marker({
+        position: new gmaps.LatLng(startCoord.lat, startCoord.lng),
+        map,
+        label: 'A'
+      })
+    }
+  }, [startCoord])
+
+  useEffect(() => {
+    const map = mapInstanceRef.current as any
+    if (!map || !(window as any).google) return
+    const gmaps = (window as any).google.maps
+    if (endMarkerRef.current) {
+      endMarkerRef.current.setPosition(new gmaps.LatLng(endCoord.lat, endCoord.lng))
+    } else {
+      endMarkerRef.current = new gmaps.Marker({
+        position: new gmaps.LatLng(endCoord.lat, endCoord.lng),
+        map,
+        label: 'B'
+      })
+    }
+  }, [endCoord])
+
   // Update route information from directions result
   const updateRouteInfo = (directions: google.maps.DirectionsResult) => {
     const route = directions.routes[0]
     const leg = route.legs[0]
     
     const steps: RouteStep[] = leg.steps.map(step => ({
-      instruction: step.instructions.replace(/<[^>]*>/g, ''), // Remove HTML tags
+      instruction: sanitizeInstruction(step.instructions || ''),
       distance: step.distance?.text || '',
       duration: step.duration?.text || ''
     }))
@@ -235,7 +313,7 @@ export default function RoutePlanner() {
       const result = await directionsServiceRef.current.route({
         origin: new google.maps.LatLng(startCoord.lat, startCoord.lng),
         destination: new google.maps.LatLng(endCoord.lat, endCoord.lng),
-        travelMode: google.maps.TravelMode.WALKING
+        travelMode: mode === 'WALKING' ? google.maps.TravelMode.WALKING : google.maps.TravelMode.BICYCLING
       })
 
       console.log('Route found:', result)
@@ -290,116 +368,60 @@ export default function RoutePlanner() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <div className="container mx-auto px-4 py-8">
-        {/* Header */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <button
-              onClick={() => router.back()}
-              className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-            >
-              ← Back
-            </button>
-            <div className="space-x-2">
-              <a
-                href="/landing"
-                className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors"
-              >
-                Home
-              </a>
-              <a
-                href="/"
-                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-              >
-                App
-              </a>
-            </div>
-          </div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
-            Route Planner
-          </h1>
-          <p className="text-gray-600 dark:text-gray-400">
-            Enter coordinates to find the walking route between two points
-          </p>
-        </div>
+      <div className="max-w-6xl mx-auto px-4 py-8">
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Controls */}
           <div className="space-y-6">
-            {/* Start Coordinates */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-                Start Point
-              </h3>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Latitude
-                  </label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={startCoord.lat}
-                    onChange={(e) => handleStartCoordChange('lat', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                    placeholder="37.7749"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Longitude
-                  </label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={startCoord.lng}
-                    onChange={(e) => handleStartCoordChange('lng', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                    placeholder="-122.4194"
-                  />
-                </div>
+            {/* Mode selector */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-800 p-6">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Mode</h3>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setMode('WALKING')}
+                  className={`px-4 py-2 rounded-md text-sm font-medium ${mode === 'WALKING' ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100'}`}
+                >
+                  Walking
+                </button>
+                <button
+                  onClick={() => setMode('BICYCLING')}
+                  className={`px-4 py-2 rounded-md text-sm font-medium ${mode === 'BICYCLING' ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100'}`}
+                >
+                  Biking
+                </button>
               </div>
-              <button
-                onClick={getCurrentLocation}
-                className="mt-3 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
-              >
-                Use My Location
-              </button>
+            </div>
+            {/* Pickers */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-800 p-6">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Start</h3>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setSelectionMode(prev => prev === 'start' ? null : 'start')}
+                  className={`px-4 py-2 rounded-md text-sm font-medium ${selectionMode === 'start' ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100'}`}
+                >
+                  {selectionMode === 'start' ? 'Picking… (click map)' : 'Pick on map'}
+                </button>
+                <button
+                  onClick={getCurrentLocation}
+                  className="px-4 py-2 rounded-md text-sm font-medium bg-green-600 text-white hover:bg-green-700"
+                >
+                  Use My Location
+                </button>
+              </div>
+              <p className="mt-3 text-xs text-gray-600 dark:text-gray-400">{startCoord.lat.toFixed(5)}, {startCoord.lng.toFixed(5)}</p>
             </div>
 
-            {/* End Coordinates */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-                End Point
-              </h3>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Latitude
-                  </label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={endCoord.lat}
-                    onChange={(e) => handleEndCoordChange('lat', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                    placeholder="37.7849"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Longitude
-                  </label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={endCoord.lng}
-                    onChange={(e) => handleEndCoordChange('lng', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                    placeholder="-122.4094"
-                  />
-                </div>
+            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-800 p-6">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">End</h3>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setSelectionMode(prev => prev === 'end' ? null : 'end')}
+                  className={`px-4 py-2 rounded-md text-sm font-medium ${selectionMode === 'end' ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100'}`}
+                >
+                  {selectionMode === 'end' ? 'Picking… (click map)' : 'Pick on map'}
+                </button>
               </div>
+              <p className="mt-3 text-xs text-gray-600 dark:text-gray-400">{endCoord.lat.toFixed(5)}, {endCoord.lng.toFixed(5)}</p>
             </div>
 
             {/* Find Route Button */}
@@ -420,7 +442,7 @@ export default function RoutePlanner() {
 
             {/* Route Information */}
             {routeInfo && (
-              <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
+              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-800 p-6">
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
                   Route Information
                 </h3>
@@ -463,17 +485,24 @@ export default function RoutePlanner() {
           </div>
 
           {/* Map */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-              Route Map
-            </h3>
-            <div 
-              ref={mapRef} 
-              className="w-full h-96 rounded-lg border border-gray-300 dark:border-gray-600"
-            />
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-              The route will appear on the map after clicking "Find Route"
-            </p>
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
+            <div className="h-96 relative">
+              {/* Overlay chips when route available */}
+              {routeInfo && (
+                <div className="absolute top-3 left-3 z-10 flex flex-wrap gap-2">
+                  <div className="px-2.5 py-1.5 rounded-full bg-black/70 text-white text-xs font-medium backdrop-blur">
+                    {routeInfo.distance}
+                  </div>
+                  <div className="px-2.5 py-1.5 rounded-full bg-black/70 text-white text-xs font-medium backdrop-blur">
+                    {routeInfo.duration}
+                  </div>
+                </div>
+              )}
+              <div 
+                ref={mapRef} 
+                className="w-full h-full"
+              />
+            </div>
           </div>
         </div>
       </div>

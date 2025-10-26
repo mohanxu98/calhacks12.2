@@ -49,7 +49,8 @@ export default function ShapeDrawer({
     setShapes(initialShapes)
   }, [initialShapes])
   const [drawMode, setDrawMode] = useState<'freehand'>('freehand')
-  const [targetDistance, setTargetDistance] = useState<number>(1000) // Default 1km in meters
+  const [targetDistance, setTargetDistance] = useState<number>(1600) // Default 1600m (1 mile ~ 1609m)
+  const [distanceUnit, setDistanceUnit] = useState<'meters' | 'miles'>('meters')
   const [showDirections, setShowDirections] = useState<DrawnShape | null>(null)
   const [isCalculatingRoute, setIsCalculatingRoute] = useState(false)
   const [routeDistances, setRouteDistances] = useState<Map<string, number>>(new Map())
@@ -439,8 +440,15 @@ export default function ShapeDrawer({
   }, [shapes, calculateAllRouteDistances, isGoogleMapsLoaded])
 
   // Handle distance input change
-  const handleDistanceChange = (distance: number) => {
-    setTargetDistance(distance)
+  const handleDistanceChange = (valueInCurrentUnit: number) => {
+    if (!isFinite(valueInCurrentUnit) || valueInCurrentUnit < 0) return
+    const meters = distanceUnit === 'miles' ? valueInCurrentUnit * 1609.344 : valueInCurrentUnit
+    setTargetDistance(meters)
+  }
+
+  const handleUnitChange = (unit: 'meters' | 'miles') => {
+    // Convert current displayed value to the new unit while keeping target meters
+    setDistanceUnit(unit)
   }
 
   return (
@@ -461,17 +469,24 @@ export default function ShapeDrawer({
             </label>
             <input
               type="number"
-              value={targetDistance}
+              value={distanceUnit === 'miles' ? (targetDistance / 1609.344).toFixed(2) : Math.round(targetDistance)}
               onChange={(e) => handleDistanceChange(Number(e.target.value))}
-              min="100"
-              max="50000"
-              step="100"
-              className="w-24 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+              min={distanceUnit === 'miles' ? 0.1 : 100}
+              max={distanceUnit === 'miles' ? 100 : 50000}
+              step={distanceUnit === 'miles' ? 0.01 : 100}
+              className="w-28 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
             />
-            <span className="text-sm text-gray-600 dark:text-gray-400">meters</span>
+            <select
+              value={distanceUnit}
+              onChange={(e) => handleUnitChange(e.target.value as 'meters' | 'miles')}
+              className="px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+            >
+              <option value="meters">meters</option>
+              <option value="miles">miles</option>
+            </select>
           </div>
           <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-            The shape will be scaled to this distance when displayed on the map
+            The shape will be scaled to this distance when displayed on the map.
           </p>
           
           {/* Route Distance Info */}

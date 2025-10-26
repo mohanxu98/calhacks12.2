@@ -2,31 +2,37 @@
 
 import { useState, useEffect } from 'react'
 import dynamic from 'next/dynamic'
-import Link from 'next/link'
 import { RunControls } from '@/components/RunControls'
 import { RunStats } from '@/components/RunStats'
 import { useTheme } from '@/components/ThemeProvider'
 import ShapeDrawer from '@/components/ShapeDrawer'
 import Directions from '@/components/Directions'
 import { RunState, LatLng, DrawnShape } from '@/types'
+import { getShapeRoute } from '@/lib/googleMapsRouting'
 import { saveRun, getShapes, saveShapes, deleteShape as deleteStoredShape } from '@/lib/storage'
+import { getBestEffortLocation } from '@/lib/location'
+import { loadGoogleMaps } from '@/lib/googleLoader'
 
 // Declare Google Maps types
 declare global {
   interface Window {
     google: any
+    confetti?: any
   }
 }
 
 // Load Google Maps script for the main page
-const loadGoogleMaps = () => {
-  if (typeof window !== 'undefined' && !window.google) {
-    const script = document.createElement('script')
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}&libraries=geometry`
-    script.async = true
-    script.defer = true
-    document.head.appendChild(script)
-  }
+// replaced by loadGoogleMaps utility
+
+// Load confetti script
+const loadConfetti = () => {
+  if (typeof window === 'undefined') return
+  if ((window as any).confetti) return
+  const script = document.createElement('script')
+  script.src = 'https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js'
+  script.async = true
+  script.defer = true
+  document.head.appendChild(script)
 }
 
 // Dynamically import the map component to avoid SSR issues with Leaflet
@@ -59,7 +65,7 @@ function calculateDistance(points: LatLng[]): number {
 }
 
 export default function Home() {
-  const { theme } = useTheme()
+  useTheme()
   const [runState, setRunState] = useState<RunState>({
     isRunning: false,
     currentPosition: null,
@@ -73,116 +79,71 @@ export default function Home() {
   const [locationError, setLocationError] = useState<string | null>(null)
   const [isLoadingLocation, setIsLoadingLocation] = useState(true)
   const [directionsShape, setDirectionsShape] = useState<DrawnShape | null>(null)
+  // Surprise route state
+  const [surpriseShape, setSurpriseShape] = useState<DrawnShape | null>(null)
+  const [surpriseTargetMeters, setSurpriseTargetMeters] = useState<number>(1600)
+  const [surpriseUnit, setSurpriseUnit] = useState<'meters' | 'miles'>('meters')
+
+  // Compact stat formatters
+  const formatTime = (milliseconds: number): string => {
+    const totalSeconds = Math.floor(milliseconds / 1000)
+    const hours = Math.floor(totalSeconds / 3600)
+    const minutes = Math.floor((totalSeconds % 3600) / 60)
+    const seconds = totalSeconds % 60
+    if (hours > 0) return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`
+  }
+
+  const formatDistance = (meters: number): string => {
+    if (meters < 1000) return `${Math.round(meters)}m`
+    return `${(meters / 1000).toFixed(2)}km`
+  }
+
+  const formatPace = (meters: number, milliseconds: number): string => {
+    if (meters === 0) return '--:--/km'
+    const paceSeconds = milliseconds / 1000 / (meters / 1000)
+    const minutes = Math.floor(paceSeconds / 60)
+    const seconds = Math.floor(paceSeconds % 60)
+    return `${minutes}:${seconds.toString().padStart(2, '0')}/km`
+  }
 
   // Load Google Maps and saved shapes on mount
   useEffect(() => {
-    loadGoogleMaps()
+    loadGoogleMaps(['geometry'])
+    loadConfetti()
     const savedShapes = getShapes()
     setDrawnShapes(savedShapes)
   }, [])
 
-  // Get user's current location on mount
+  // Get user's current location on mount with best-effort fallback
   useEffect(() => {
-    const getLocation = () => {
-      if (!navigator.geolocation) {
-        setLocationError('Geolocation is not supported by this browser')
-        setIsLoadingLocation(false)
-        return
-      }
-
+    const doLocate = async () => {
       setIsLoadingLocation(true)
       setLocationError(null)
-
-      const options: PositionOptions = {
-        enableHighAccuracy: true,
-        timeout: 15000, // Increased timeout
-        maximumAge: 60000 // 1 minute cache
+      const loc = await getBestEffortLocation()
+      if (loc) {
+        setUserLocation(loc)
+      } else {
+        setLocationError('Unable to determine your location. You can enter it manually below.')
       }
-
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const { latitude, longitude } = position.coords
-          setUserLocation({ lat: latitude, lng: longitude })
-          setLocationError(null)
-          setIsLoadingLocation(false)
-        },
-        (error) => {
-          console.error('Error getting location:', error)
-          let errorMessage = 'Unable to get your location. '
-          let troubleshooting = ''
-          
-          switch (error.code) {
-            case error.PERMISSION_DENIED:
-              errorMessage += 'Location access was denied.'
-              troubleshooting = 'Click the location icon in your browser address bar and allow location access, or check your browser settings.'
-              break
-            case error.POSITION_UNAVAILABLE:
-              errorMessage += 'Location information is unavailable.'
-              troubleshooting = 'Make sure you have a good internet connection and GPS is enabled on your device.'
-              break
-            case error.TIMEOUT:
-              errorMessage += 'Location request timed out.'
-              troubleshooting = 'Try refreshing the page or check if you have a VPN/privacy extension blocking location access.'
-              break
-            default:
-              errorMessage += 'An unknown error occurred.'
-              troubleshooting = 'Try refreshing the page or using a different browser.'
-              break
-          }
-          
-          setLocationError(errorMessage + (troubleshooting ? ` ${troubleshooting}` : ''))
-          setIsLoadingLocation(false)
-        },
-        options
-      )
+      setIsLoadingLocation(false)
     }
-
-    getLocation()
+    doLocate()
   }, [])
 
   // Retry location function with fallback options
   const retryLocation = () => {
     setLocationError(null)
     setIsLoadingLocation(true)
-    
-    if (navigator.geolocation) {
-      // Try high accuracy first
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const { latitude, longitude } = position.coords
-          setUserLocation({ lat: latitude, lng: longitude })
-          setLocationError(null)
-          setIsLoadingLocation(false)
-        },
-        (error) => {
-          console.error('High accuracy failed, trying low accuracy:', error)
-          // Fallback to low accuracy
-          navigator.geolocation.getCurrentPosition(
-            (position) => {
-              const { latitude, longitude } = position.coords
-              setUserLocation({ lat: latitude, lng: longitude })
-              setLocationError(null)
-              setIsLoadingLocation(false)
-            },
-            (fallbackError) => {
-              console.error('All location methods failed:', fallbackError)
-              setLocationError('All location methods failed. Please check your browser settings, disable VPN/privacy extensions, or use manual location input.')
-              setIsLoadingLocation(false)
-            },
-            {
-              enableHighAccuracy: false, // Lower accuracy fallback
-              timeout: 20000,
-              maximumAge: 300000 // 5 minutes cache
-            }
-          )
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 15000,
-          maximumAge: 0
-        }
-      )
-    }
+    getBestEffortLocation().then((loc) => {
+      if (loc) {
+        setUserLocation(loc)
+        setLocationError(null)
+      } else {
+        setLocationError('Unable to determine your location. You can enter it manually below.')
+      }
+      setIsLoadingLocation(false)
+    })
   }
 
   // Use default location as fallback
@@ -241,32 +202,30 @@ export default function Home() {
     }
   }, [runState.isRunning, runState.startTime])
 
-  const handleStartRun = () => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const { latitude, longitude } = position.coords
-          const currentPos = { lat: latitude, lng: longitude }
+  const handleStartRun = async () => {
+    try {
+      const loc = await getBestEffortLocation()
+      if (!loc) throw new Error('location-unavailable')
+      const currentPos = { lat: loc.lat, lng: loc.lng }
 
-          setRunState({
-            isRunning: true,
-            currentPosition: currentPos,
-            route: [currentPos],
-            startTime: new Date(),
-            elapsedTime: 0,
-          })
+      setRunState({
+        isRunning: true,
+        currentPosition: currentPos,
+        route: [currentPos],
+        startTime: new Date(),
+        elapsedTime: 0,
+      })
 
-          // Open directions for the most recently drawn shape
-          if (drawnShapes.length > 0) {
-            const latestShape = drawnShapes[drawnShapes.length - 1]
-            setDirectionsShape(latestShape)
-          }
-        },
-        (error) => {
-          console.error('Error getting location for run start:', error)
-          alert('Unable to get your location. Please enable location services.')
-        }
-      )
+      // If a surprise route exists, use that; else use most recent drawn shape
+      if (surpriseShape) {
+        setDirectionsShape(surpriseShape)
+      } else if (drawnShapes.length > 0) {
+        const latestShape = drawnShapes[drawnShapes.length - 1]
+        setDirectionsShape(latestShape)
+      }
+    } catch (err) {
+      console.error('Error getting location for run start:', err)
+      alert('Unable to get your location right now. Please enable location services or try again in a few seconds.')
     }
   }
 
@@ -275,24 +234,52 @@ export default function Home() {
       // Calculate final stats
       const finalElapsedTime = Date.now() - prev.startTime!.getTime()
       const distance = calculateDistance(prev.route)
-      const averagePace = distance > 0 ? finalElapsedTime / distance * 1000 : 0
+      // Store pace in seconds per km; finalElapsedTime (ms) / distance (m) yields s/km
+      const averagePace = distance > 0 ? finalElapsedTime / distance : 0
 
-      // Save run to localStorage if there's a meaningful run (distance > 50m and time > 30s)
-      if (distance > 50 && finalElapsedTime > 30000) {
-        saveRun({
-          date: prev.startTime!.toISOString(),
-          duration: finalElapsedTime,
-          distance: distance,
-          averagePace: averagePace,
-          route: prev.route,
-        })
-      }
+      // Always save the run (even short tests), but clamp tiny negatives
+      saveRun({
+        date: prev.startTime!.toISOString(),
+        duration: Math.max(0, finalElapsedTime),
+        distance: Math.max(0, distance),
+        averagePace,
+        route: prev.route,
+      })
 
-      return {
+      const newState = {
         ...prev,
         isRunning: false,
       }
+      return newState
     })
+    // Confetti celebration
+    const celebrate = () => {
+      const confetti = (window as any).confetti
+      if (!confetti) return
+      const end = Date.now() + 800
+      const colors = ['#34d399', '#60a5fa', '#f472b6', '#fbbf24']
+      const frame = () => {
+        confetti({
+          particleCount: 40,
+          spread: 55,
+          startVelocity: 45,
+          origin: { x: Math.random() * 0.4 + 0.3, y: 0.1 },
+          colors,
+        })
+        if (Date.now() < end) requestAnimationFrame(frame)
+      }
+      frame()
+    }
+    celebrate()
+    // Reveal surprise shape after run ends
+    if (surpriseShape) {
+      setDrawnShapes(prev => {
+        const updated = [...prev, surpriseShape]
+        saveShapes(updated)
+        return updated
+      })
+      setSurpriseShape(null)
+    }
   }
 
   const handlePositionUpdate = (position: LatLng) => {
@@ -330,37 +317,71 @@ export default function Home() {
     })
   }
 
+  // Surprise route: generate random closed shape around user
+  const generateSurpriseBaseShape = (center: LatLng, numPoints = 8, radiusMeters = 200): LatLng[] => {
+    const pts: LatLng[] = []
+    for (let i = 0; i < numPoints; i++) {
+      const angle = (i / numPoints) * 2 * Math.PI + (Math.random() * 0.4 - 0.2)
+      const r = radiusMeters * (0.7 + Math.random() * 0.6)
+      const dLat = (r * Math.sin(angle)) / 111320
+      const dLng = (r * Math.cos(angle)) / (111320 * Math.cos(center.lat * Math.PI / 180))
+      pts.push({ lat: center.lat + dLat, lng: center.lng + dLng })
+    }
+    // close the loop
+    pts.push(pts[0])
+    return pts
+  }
+
+  // Scale points around a center
+  const scalePoints = (points: LatLng[], center: LatLng, factor: number): LatLng[] => {
+    return points.map(p => ({
+      lat: center.lat + (p.lat - center.lat) * factor,
+      lng: center.lng + (p.lng - center.lng) * factor
+    }))
+  }
+
+  // Fit a shape's routed length to target meters (binary search, bounded)
+  const fitShapeToDistance = async (base: LatLng[], center: LatLng, targetMeters: number): Promise<LatLng[]> => {
+    try {
+      const baseRes = await getShapeRoute(base)
+      const baseDist = Math.max(1, baseRes?.distance || 1)
+      let lo = 0.05
+      let hi = 10
+      let best = { factor: targetMeters / baseDist, pts: base, dist: baseDist }
+      for (let i = 0; i < 7; i++) {
+        const mid = (lo + hi) / 2
+        const candidate = scalePoints(base, center, mid)
+        const res = await getShapeRoute(candidate)
+        const dist = res?.distance || 0
+        if (Math.abs(dist - targetMeters) < Math.abs(best.dist - targetMeters)) {
+          best = { factor: mid, pts: candidate, dist }
+        }
+        if (dist < targetMeters) lo = mid; else hi = mid
+        if (Math.abs(best.dist - targetMeters) <= Math.max(10, targetMeters * 0.01)) break
+      }
+      return best.pts
+    } catch {
+      return base
+    }
+  }
+
+  const handleGenerateSurprise = async () => {
+    if (!userLocation) return
+    const requested = surpriseUnit === 'miles' ? surpriseTargetMeters * 1609.344 : surpriseTargetMeters
+    // Enforce a practical minimum (routing granularity)
+    const targetMeters = Math.max(100, requested)
+    const base = generateSurpriseBaseShape(userLocation, 10, 200)
+    const fitted = await fitShapeToDistance(base, userLocation, targetMeters)
+    const shape: DrawnShape = { id: `surprise-${Date.now()}`, type: 'freehand', points: fitted, color: '#8b5cf6' }
+    setSurpriseShape(shape)
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        {/* Header */}
-        <div className="mb-6">
-                  <div className="flex justify-between items-center mb-4">
-                    <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
-                      <span className="neon-text">Running Tracker</span>
-                    </h1>
-                    <div className="space-x-2">
-                      <Link
-                        href="/landing"
-                        className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors"
-                      >
-                        Home
-                      </Link>
-                      <Link
-                        href="/route-planner"
-                        className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-                      >
-                        Route Planner
-                      </Link>
-                    </div>
-                  </div>
-          <p className="text-gray-600 dark:text-gray-400 mt-1">
-            Track your runs with GPS and view your progress
-          </p>
-        </div>
+      <div className="max-w-6xl mx-auto px-4 py-6">
 
         {/* Run Controls */}
-        <div className="mb-6">
+        <div className="mb-6 flex justify-center">
           <RunControls
             isRunning={runState.isRunning}
             onStart={handleStartRun}
@@ -379,16 +400,52 @@ export default function Home() {
           </div>
         )}
 
-        {/* Shape Drawer */}
+        {/* Shape Drawer + Surprise */}
         {userLocation && (
           <div className="mb-6">
-            <ShapeDrawer
-              onShapeComplete={handleShapeComplete}
-              onShapeUpdate={handleShapeUpdate}
-              onShapeDelete={handleShapeDelete}
-              initialShapes={drawnShapes}
-              userLocation={userLocation}
-            />
+            <div className="flex items-start gap-4 flex-col lg:flex-row">
+              <div className="flex-1 min-w-0">
+                <ShapeDrawer
+                  onShapeComplete={handleShapeComplete}
+                  onShapeUpdate={handleShapeUpdate}
+                  onShapeDelete={handleShapeDelete}
+                  initialShapes={drawnShapes}
+                  userLocation={userLocation}
+                />
+              </div>
+              <div className="w-full lg:w-80 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-800 p-4">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">Surprise Route</h3>
+                <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">We’ll generate a hidden route for you around your location. You’ll see the shape after you finish the run.</p>
+                <div className="flex items-center gap-2 mb-3">
+                  <input
+                    type="number"
+                    value={surpriseUnit === 'miles' ? (surpriseTargetMeters / 1609.344).toFixed(2) : Math.round(surpriseTargetMeters)}
+                    onChange={(e) => setSurpriseTargetMeters(surpriseUnit === 'miles' ? Number(e.target.value) * 1609.344 : Number(e.target.value))}
+                    min={surpriseUnit === 'miles' ? 0.1 : 100}
+                    max={surpriseUnit === 'miles' ? 100 : 50000}
+                    step={surpriseUnit === 'miles' ? 0.01 : 100}
+                    className="w-28 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                  />
+                  <select
+                    value={surpriseUnit}
+                    onChange={(e) => setSurpriseUnit(e.target.value as 'meters' | 'miles')}
+                    className="px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                  >
+                    <option value="meters">meters</option>
+                    <option value="miles">miles</option>
+                  </select>
+                </div>
+                <button
+                  onClick={handleGenerateSurprise}
+                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-md bg-purple-600 text-white text-sm font-medium hover:bg-purple-700"
+                >
+                  Generate surprise
+                </button>
+                {surpriseShape && (
+                  <div className="mt-3 text-xs text-purple-700 dark:text-purple-300">Surprise route ready. Start your run to reveal it in directions.</div>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
@@ -504,8 +561,20 @@ export default function Home() {
         )}
 
         {/* Map */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg neon-glow overflow-hidden">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
           <div className="h-96 relative">
+            {/* Compact stats overlay */}
+            <div className="absolute top-3 left-3 z-10 flex flex-wrap gap-2">
+              <div className="px-2.5 py-1.5 rounded-full bg-black/70 text-white text-xs font-medium backdrop-blur">
+                {formatTime(runState.elapsedTime)}
+              </div>
+              <div className="px-2.5 py-1.5 rounded-full bg-black/70 text-white text-xs font-medium backdrop-blur">
+                {formatDistance(calculateDistance(runState.route))}
+              </div>
+              <div className="px-2.5 py-1.5 rounded-full bg-black/70 text-white text-xs font-medium backdrop-blur">
+                {formatPace(calculateDistance(runState.route), runState.elapsedTime)}
+              </div>
+            </div>
             {userLocation ? (
               <Map
                 key={`map-${drawnShapes.length}-${drawnShapes.map(s => s.id).join(',')}`}
@@ -538,37 +607,7 @@ export default function Home() {
           onClose={() => setDirectionsShape(null)}
         />
       )}
-
-        {/* Instructions */}
-        {!runState.isRunning && !runState.route.length && (
-          <div className="mt-6 text-center">
-            <div className="bg-green-50 dark:bg-green-900/20 border border-neon-green/30 dark:border-neon-green/50 rounded-lg p-4 neon-glow">
-              <h3 className="text-lg font-medium text-green-900 dark:text-green-100 mb-2">
-                How to use
-              </h3>
-              <div className="text-green-700 dark:text-green-200 text-sm space-y-2">
-                <p>
-                  <strong>Draw Routes:</strong> Use the shape drawing tool above to create custom running routes. 
-                  Choose from polygon, freehand, rectangle, or circle tools.
-                </p>
-                <p>
-                  <strong>Track Runs:</strong> Click "Start Run" to begin tracking your route. Make sure location services are enabled in your browser.
-                  Your path will be displayed on the map in real-time. Click "Stop Run" when finished to save your run data.
-                </p>
-                <p>
-                  <strong>Location Issues:</strong> If the app can't get your location, try these solutions:
-                </p>
-                <ul className="text-sm text-green-700 dark:text-green-200 mt-2 space-y-1 list-disc list-inside">
-                  <li>Click the location icon in your browser address bar and allow access</li>
-                  <li>Check your browser's location permissions in settings</li>
-                  <li>Disable VPN or privacy extensions temporarily</li>
-                  <li>Try refreshing the page or using a different browser</li>
-                  <li>Use the manual location input as a fallback</li>
-                </ul>
-              </div>
-            </div>
-          </div>
-        )}
+      
       </div>
     </div>
   )

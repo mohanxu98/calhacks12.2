@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "🚀 Setting up Running Tracker..."
+echo "🚀 Setting up Runr..."
 
 # Check if Node.js is installed
 if ! command -v node &> /dev/null; then
