@@ -83,7 +83,7 @@ function generateMockRoute(waypoints: LatLng[]): RoutingResult {
     totalDuration += duration
     
     // Only create steps for significant distances (avoid tiny steps)
-    if (distance > 10) { // Only include steps longer than 10m
+    if (distance > 50) { // Only include steps longer than 50m to avoid repetitive short instructions
       const instruction = generateInstruction(current, next, steps.length, waypoints.length - 1)
       
       steps.push({
@@ -147,7 +147,6 @@ function generateInstruction(current: LatLng, next: LatLng, stepIndex: number, t
   const angle = Math.atan2(lngDiff, latDiff) * 180 / Math.PI
   
   let direction = ''
-  let turnType = ''
   
   // Determine primary direction
   if (angle >= -22.5 && angle < 22.5) {
@@ -171,17 +170,23 @@ function generateInstruction(current: LatLng, next: LatLng, stepIndex: number, t
   if (stepIndex === 0) {
     return `Start by heading ${direction}`
   } else if (stepIndex === totalSteps - 1) {
-    return `Continue ${direction} to finish the route`
+    return `Continue ${direction} to complete the route`
   } else {
-    // Add variety to turn instructions
-    const turnInstructions = [
+    // More varied and useful instructions
+    const instructions = [
       `Turn ${direction}`,
       `Head ${direction}`,
       `Go ${direction}`,
-      `Continue ${direction}`,
-      `Follow the path ${direction}`
+      `Follow the path ${direction}`,
+      `Take the route ${direction}`,
+      `Proceed ${direction}`,
+      `Move ${direction}`,
+      `Walk ${direction}`
     ]
-    return turnInstructions[stepIndex % turnInstructions.length]
+    
+    // Use step index to ensure variety, but avoid exact repetition
+    const instructionIndex = (stepIndex * 3) % instructions.length
+    return instructions[instructionIndex]
   }
 }
 

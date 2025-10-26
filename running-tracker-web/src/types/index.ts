@@ -34,7 +34,7 @@ export interface RunState {
 
 export interface DrawnShape {
   id: string;
-  type: 'polygon' | 'freehand' | 'rectangle' | 'circle';
+  type: 'freehand';
   points: LatLng[];
   name?: string;
   color?: string;

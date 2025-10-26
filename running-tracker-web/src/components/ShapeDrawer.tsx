@@ -14,7 +14,7 @@ declare global {
 
 export interface DrawnShape {
   id: string
-  type: 'polygon' | 'freehand' | 'rectangle' | 'circle'
+  type: 'freehand'
   points: LatLng[]
   name?: string
   color?: string
@@ -48,8 +48,7 @@ export default function ShapeDrawer({
   useEffect(() => {
     setShapes(initialShapes)
   }, [initialShapes])
-  const [drawMode, setDrawMode] = useState<'polygon' | 'freehand' | 'rectangle' | 'circle'>('polygon')
-  const [startPoint, setStartPoint] = useState<{ x: number; y: number } | null>(null)
+  const [drawMode, setDrawMode] = useState<'freehand'>('freehand')
   const [targetDistance, setTargetDistance] = useState<number>(1000) // Default 1km in meters
   const [showDirections, setShowDirections] = useState<DrawnShape | null>(null)
   const [isCalculatingRoute, setIsCalculatingRoute] = useState(false)
@@ -191,61 +190,34 @@ export default function ShapeDrawer({
     })
   }
 
-  // Handle mouse down
+  // Handle mouse down - start freehand drawing
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
     if (!canvas) return
+
+    // Clear any existing shapes when starting a new one (only allow one shape at a time)
+    if (shapes.length > 0) {
+      shapes.forEach(shape => {
+        onShapeDelete?.(shape.id)
+      })
+      setShapes([])
+    }
 
     const rect = canvas.getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
 
-    if (drawMode === 'polygon') {
-      if (!isDrawing) {
-        // Start new polygon
-        const newShape: DrawnShape = {
-          id: Date.now().toString(),
-          type: 'polygon',
-          points: [canvasToLatLng(x, y)],
-          targetDistance
-        }
-        setCurrentShape(newShape)
-        setIsDrawing(true)
-      } else if (currentShape) {
-        // Add point to existing polygon
-        const updatedShape = {
-          ...currentShape,
-          points: [...currentShape.points, canvasToLatLng(x, y)],
-          targetDistance
-        }
-        setCurrentShape(updatedShape)
-        onShapeUpdate?.(updatedShape)
-      }
-    } else if (drawMode === 'freehand') {
-      const newShape: DrawnShape = {
-        id: Date.now().toString(),
-        type: 'freehand',
-        points: [canvasToLatLng(x, y)],
-        targetDistance
-      }
-      setCurrentShape(newShape)
-      setIsDrawing(true)
-    } else if (drawMode === 'rectangle' || drawMode === 'circle') {
-      if (!isDrawing) {
-        const newShape: DrawnShape = {
-          id: Date.now().toString(),
-          type: drawMode,
-          points: [canvasToLatLng(x, y)],
-          targetDistance
-        }
-        setCurrentShape(newShape)
-        setStartPoint({ x, y })
-        setIsDrawing(true)
-      }
+    const newShape: DrawnShape = {
+      id: Date.now().toString(),
+      type: 'freehand',
+      points: [canvasToLatLng(x, y)],
+      targetDistance
     }
+    setCurrentShape(newShape)
+    setIsDrawing(true)
   }
 
-  // Handle mouse move
+  // Handle mouse move - continue freehand drawing with direction-based consolidation
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!isDrawing || !currentShape) return
 
@@ -256,18 +228,14 @@ export default function ShapeDrawer({
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
 
-    if (drawMode === 'freehand') {
+    const newPoint = canvasToLatLng(x, y)
+    const currentPoints = currentShape.points
+
+    // Only add point if there's a significant direction change or minimum distance
+    if (shouldAddPoint(currentPoints, newPoint)) {
       const updatedShape = {
         ...currentShape,
-        points: [...currentShape.points, canvasToLatLng(x, y)],
-        targetDistance
-      }
-      setCurrentShape(updatedShape)
-      onShapeUpdate?.(updatedShape)
-    } else if ((drawMode === 'rectangle' || drawMode === 'circle') && startPoint) {
-      const updatedShape = {
-        ...currentShape,
-        points: [canvasToLatLng(startPoint.x, startPoint.y), canvasToLatLng(x, y)],
+        points: [...currentPoints, newPoint],
         targetDistance
       }
       setCurrentShape(updatedShape)
@@ -275,44 +243,127 @@ export default function ShapeDrawer({
     }
   }
 
-  // Handle mouse up
+  // Determine if a new point should be added based on direction and distance
+  const shouldAddPoint = (currentPoints: LatLng[], newPoint: LatLng): boolean => {
+    if (currentPoints.length === 0) return true
+
+    const lastPoint = currentPoints[currentPoints.length - 1]
+    
+    // Always add if we have very few points
+    if (currentPoints.length < 3) return true
+
+    // Calculate distance from last point
+    const distance = calculateDistance(lastPoint, newPoint)
+    const minDistance = 2 // Minimum 2 meters between points (reduced from 5)
+
+    // Add if distance is too small
+    if (distance < minDistance) return false
+
+    // Calculate direction change
+    const directionChange = calculateDirectionChange(currentPoints, newPoint)
+    const maxDirectionChange = 15 // Maximum 15 degrees before adding new point (reduced from 30)
+
+    // Add if direction change is significant OR if we haven't added a point in a while
+    return directionChange > maxDirectionChange || distance > 10 // Add point every 10 meters regardless of direction
+  }
+
+  // Calculate the change in direction between the last few points and the new point
+  const calculateDirectionChange = (currentPoints: LatLng[], newPoint: LatLng): number => {
+    if (currentPoints.length < 2) return 0
+
+    const lastPoint = currentPoints[currentPoints.length - 1]
+    const secondLastPoint = currentPoints[currentPoints.length - 2]
+
+    // Calculate direction from second-to-last to last point
+    const prevDirection = Math.atan2(
+      lastPoint.lng - secondLastPoint.lng,
+      lastPoint.lat - secondLastPoint.lat
+    )
+
+    // Calculate direction from last point to new point
+    const newDirection = Math.atan2(
+      newPoint.lng - lastPoint.lng,
+      newPoint.lat - lastPoint.lat
+    )
+
+    // Calculate the difference in angles
+    let angleDiff = Math.abs(newDirection - prevDirection)
+    
+    // Normalize to 0-180 degrees
+    if (angleDiff > Math.PI) {
+      angleDiff = 2 * Math.PI - angleDiff
+    }
+
+    // Convert to degrees
+    return (angleDiff * 180) / Math.PI
+  }
+
+  // Calculate distance between two points
+  const calculateDistance = (point1: LatLng, point2: LatLng): number => {
+    const R = 6371e3 // Earth's radius in meters
+    const φ1 = (point1.lat * Math.PI) / 180
+    const φ2 = (point2.lat * Math.PI) / 180
+    const Δφ = ((point2.lat - point1.lat) * Math.PI) / 180
+    const Δλ = ((point2.lng - point1.lng) * Math.PI) / 180
+
+    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+      Math.cos(φ1) * Math.cos(φ2) *
+      Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+
+    return R * c
+  }
+
+  // Handle mouse up - complete freehand drawing
   const handleMouseUp = () => {
     if (!isDrawing || !currentShape) return
 
-    if (drawMode === 'freehand') {
-      // Complete freehand drawing
-      const completedShape = { ...currentShape }
-      setShapes(prev => [...prev, completedShape])
-      onShapeComplete(completedShape)
-      setCurrentShape(null)
-      setIsDrawing(false)
-      // Manual scaling only - use Auto-Scale button
-    } else if (drawMode === 'rectangle' || drawMode === 'circle') {
-      // Complete rectangle/circle drawing
-      if (currentShape.points.length >= 2) {
-        const completedShape = { ...currentShape }
-        setShapes(prev => [...prev, completedShape])
-        onShapeComplete(completedShape)
-        setCurrentShape(null)
-        setStartPoint(null)
-        setIsDrawing(false)
-        // Auto-scale to target distance
-        setTimeout(() => autoScaleCurrentShape(), 100)
-      }
+    // Post-process the shape to consolidate points further
+    const consolidatedPoints = consolidatePoints(currentShape.points)
+    
+    // Complete freehand drawing with consolidated points
+    const completedShape = { 
+      ...currentShape, 
+      points: consolidatedPoints 
     }
+    setShapes(prev => [...prev, completedShape])
+    onShapeComplete(completedShape)
+    setCurrentShape(null)
+    setIsDrawing(false)
   }
 
-  // Handle double click to complete polygon
-  const handleDoubleClick = () => {
-    if (drawMode === 'polygon' && currentShape && currentShape.points.length >= 3) {
-      const completedShape = { ...currentShape }
-      setShapes(prev => [...prev, completedShape])
-      onShapeComplete(completedShape)
-      setCurrentShape(null)
-      setIsDrawing(false)
-      // Manual scaling only - use Auto-Scale button
+  // Post-process points to further consolidate based on direction
+  const consolidatePoints = (points: LatLng[]): LatLng[] => {
+    if (points.length <= 2) return points
+
+    const consolidated: LatLng[] = [points[0]] // Always keep first point
+    let i = 1
+
+    while (i < points.length - 1) {
+      const currentPoint = points[i]
+      const nextPoint = points[i + 1]
+      
+      // Calculate direction change
+      const directionChange = calculateDirectionChange([consolidated[consolidated.length - 1], currentPoint], nextPoint)
+      
+      // If direction change is small, skip this point
+      if (directionChange < 20) { // 20 degrees threshold for post-processing
+        i++
+        continue
+      }
+      
+      // Add the current point and move to next
+      consolidated.push(currentPoint)
+      i++
     }
+
+    // Always keep the last point
+    consolidated.push(points[points.length - 1])
+    
+    console.log(`Consolidated from ${points.length} to ${consolidated.length} points`)
+    return consolidated
   }
+
 
   // Redraw when shapes change
   useEffect(() => {
@@ -321,9 +372,15 @@ export default function ShapeDrawer({
 
   // Clear all shapes
   const clearShapes = () => {
+    // Clear local state
     setShapes([])
     setCurrentShape(null)
     setIsDrawing(false)
+    
+    // Notify parent to clear all shapes from map
+    shapes.forEach(shape => {
+      onShapeDelete?.(shape.id)
+    })
   }
 
   // Delete a shape
@@ -445,21 +502,17 @@ export default function ShapeDrawer({
           )}
         </div>
         
-        {/* Drawing mode selector */}
-        <div className="flex gap-2 mb-4">
-          {(['polygon', 'freehand', 'rectangle', 'circle'] as const).map((mode) => (
-            <button
-              key={mode}
-              onClick={() => setDrawMode(mode)}
-              className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
-                drawMode === mode
-                  ? 'bg-neon-green text-black'
-                  : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
-              }`}
-            >
-              {mode.charAt(0).toUpperCase() + mode.slice(1)}
-            </button>
-          ))}
+        {/* Drawing mode indicator */}
+        <div className="mb-4 p-2 bg-green-50 dark:bg-green-900/20 rounded-lg">
+          <div className="flex items-center">
+            <div className="w-3 h-3 bg-green-500 rounded-full mr-2"></div>
+            <span className="text-sm font-medium text-green-800 dark:text-green-200">
+              Smart Freehand Drawing
+            </span>
+          </div>
+          <p className="text-xs text-green-600 dark:text-green-300 mt-1">
+            Click and drag to draw your running route. Points are automatically consolidated based on direction changes.
+          </p>
         </div>
 
         {/* Canvas */}
@@ -471,7 +524,6 @@ export default function ShapeDrawer({
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
-            onDoubleClick={handleDoubleClick}
             className="cursor-crosshair"
             style={{ display: 'block' }}
           />

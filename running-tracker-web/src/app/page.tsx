@@ -7,6 +7,7 @@ import { RunControls } from '@/components/RunControls'
 import { RunStats } from '@/components/RunStats'
 import { useTheme } from '@/components/ThemeProvider'
 import ShapeDrawer from '@/components/ShapeDrawer'
+import Directions from '@/components/Directions'
 import { RunState, LatLng, DrawnShape } from '@/types'
 import { saveRun, getShapes, saveShapes, deleteShape as deleteStoredShape } from '@/lib/storage'
 
@@ -71,6 +72,7 @@ export default function Home() {
   const [drawnShapes, setDrawnShapes] = useState<DrawnShape[]>([])
   const [locationError, setLocationError] = useState<string | null>(null)
   const [isLoadingLocation, setIsLoadingLocation] = useState(true)
+  const [directionsShape, setDirectionsShape] = useState<DrawnShape | null>(null)
 
   // Load Google Maps and saved shapes on mount
   useEffect(() => {
@@ -253,6 +255,12 @@ export default function Home() {
             startTime: new Date(),
             elapsedTime: 0,
           })
+
+          // Open directions for the most recently drawn shape
+          if (drawnShapes.length > 0) {
+            const latestShape = drawnShapes[drawnShapes.length - 1]
+            setDirectionsShape(latestShape)
+          }
         },
         (error) => {
           console.error('Error getting location for run start:', error)
@@ -520,6 +528,16 @@ export default function Home() {
             )}
           </div>
         </div>
+
+      {/* Directions Modal - shown when a run starts */}
+      {directionsShape && (userLocation || runState.currentPosition) && (
+        <Directions
+          shape={directionsShape}
+          userLocation={(userLocation ?? runState.currentPosition)!}
+          currentPosition={runState.currentPosition}
+          onClose={() => setDirectionsShape(null)}
+        />
+      )}
 
         {/* Instructions */}
         {!runState.isRunning && !runState.route.length && (

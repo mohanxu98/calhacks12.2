@@ -23,7 +23,77 @@ interface RouteInfo {
 // Declare global callback for Google Maps
 declare global {
   interface Window {
-    initMap: () => void
+    initMap?: () => void
+    google: any
+  }
+}
+
+// Declare Google Maps types
+declare namespace google {
+  namespace maps {
+    class Map {
+      constructor(element: HTMLElement, options: MapOptions)
+    }
+    class DirectionsService {
+      route(request: DirectionsRequest): Promise<DirectionsResult>
+    }
+    class DirectionsRenderer {
+      constructor(options: DirectionsRendererOptions)
+      setDirections(directions: DirectionsResult): void
+      addListener(event: string, handler: () => void): void
+      getDirections(): DirectionsResult | null
+    }
+    class LatLng {
+      constructor(lat: number, lng: number)
+    }
+    enum TravelMode {
+      WALKING
+    }
+    enum MapTypeId {
+      ROADMAP
+    }
+    interface MapOptions {
+      center: LatLngLiteral
+      zoom: number
+      mapTypeId: MapTypeId
+    }
+    interface LatLngLiteral {
+      lat: number
+      lng: number
+    }
+    interface DirectionsRequest {
+      origin: LatLng
+      destination: LatLng
+      travelMode: TravelMode
+    }
+    interface DirectionsResult {
+      routes: Route[]
+    }
+    interface Route {
+      legs: RouteLeg[]
+    }
+    interface RouteLeg {
+      steps: DirectionsStep[]
+      distance?: Distance
+      duration?: Duration
+    }
+    interface DirectionsStep {
+      instructions: string
+      distance?: Distance
+      duration?: Duration
+    }
+    interface Distance {
+      text: string
+      value: number
+    }
+    interface Duration {
+      text: string
+      value: number
+    }
+    interface DirectionsRendererOptions {
+      draggable: boolean
+      map: Map
+    }
   }
 }
 
@@ -171,15 +241,15 @@ export default function RoutePlanner() {
       console.log('Route found:', result)
       directionsRendererRef.current.setDirections(result)
       updateRouteInfo(result)
-    } catch (err) {
+    } catch (err: any) {
       console.error('Route finding error:', err)
       console.error('Error details:', {
-        status: err.status,
-        message: err.message,
-        code: err.code,
-        details: err.details
+        status: err?.status,
+        message: err?.message,
+        code: err?.code,
+        details: err?.details
       })
-      setError(`Failed to find route: ${err.message || 'Please check your coordinates and API key.'}`)
+      setError(`Failed to find route: ${err?.message || 'Please check your coordinates and API key.'}`)
     } finally {
       setIsLoading(false)
     }
