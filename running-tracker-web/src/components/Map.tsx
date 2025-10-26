@@ -81,7 +81,7 @@ export default function Map({ center, zoom, runState, onPositionUpdate }: MapPro
             } else {
               const customIcon = L.divIcon({
                 className: 'custom-position-marker',
-                html: '<div style="background-color: #3b82f6; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>',
+                html: `<div style="background-color: #39FF14; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 4px rgba(57,255,20,0.5);"></div>`,
                 iconSize: [16, 16],
                 iconAnchor: [8, 8],
               })
@@ -101,7 +101,7 @@ export default function Map({ center, zoom, runState, onPositionUpdate }: MapPro
                 routeLineRef.current = L.polyline(
                   runState.route.map(point => [point.lat, point.lng]),
                   {
-                    color: '#3b82f6',
+                    color: '#39FF14',
                     weight: 4,
                     opacity: 0.8,
                     smoothFactor: 1,

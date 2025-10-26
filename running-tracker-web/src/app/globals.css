@@ -18,7 +18,7 @@
 
 @layer components {
   .btn-primary {
-    @apply bg-primary-600 hover:bg-primary-700 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2;
+    @apply bg-neon-green hover:bg-neon-green-dark text-black font-medium py-2 px-4 rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-neon-green focus:ring-offset-2 shadow-lg hover:shadow-neon-green/25;
   }
 
   .btn-secondary {
@@ -35,5 +35,13 @@
 
   .stat-card {
     @apply bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700;
+  }
+
+  .neon-glow {
+    @apply shadow-lg shadow-neon-green/25;
+  }
+
+  .neon-text {
+    @apply text-neon-green;
   }
 }

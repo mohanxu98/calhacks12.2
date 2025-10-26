@@ -71,7 +71,7 @@ export function RunStats({ isRunning, elapsedTime, route }: RunStatsProps) {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="text-center">
-          <div className="text-3xl font-bold text-primary-600">
+          <div className="text-3xl font-bold neon-text">
             {formatTime(elapsedTime)}
           </div>
           <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
@@ -80,7 +80,7 @@ export function RunStats({ isRunning, elapsedTime, route }: RunStatsProps) {
         </div>
 
         <div className="text-center">
-          <div className="text-3xl font-bold text-primary-600">
+          <div className="text-3xl font-bold neon-text">
             {formatDistance(distance)}
           </div>
           <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
@@ -89,7 +89,7 @@ export function RunStats({ isRunning, elapsedTime, route }: RunStatsProps) {
         </div>
 
         <div className="text-center">
-          <div className="text-3xl font-bold text-primary-600">
+          <div className="text-3xl font-bold neon-text">
             {formatPace(distance, elapsedTime)}
           </div>
           <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">

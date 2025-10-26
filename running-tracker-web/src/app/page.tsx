@@ -146,7 +146,7 @@ export default function Home() {
         {/* Header */}
         <div className="mb-6">
           <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
-            Running Tracker
+            <span className="neon-text">Running Tracker</span>
           </h1>
           <p className="text-gray-600 dark:text-gray-400 mt-1">
             Track your runs with GPS and view your progress
@@ -174,7 +174,7 @@ export default function Home() {
         )}
 
         {/* Map */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg neon-glow overflow-hidden">
           <div className="h-96 relative">
             {userLocation ? (
               <Map
@@ -186,7 +186,7 @@ export default function Home() {
             ) : (
               <div className="w-full h-full flex items-center justify-center bg-gray-200 dark:bg-gray-700">
                 <div className="text-center">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-2"></div>
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-neon-green mx-auto mb-2"></div>
                   <p className="text-gray-600 dark:text-gray-400">
                     Getting your location...
                   </p>
@@ -199,11 +199,11 @@ export default function Home() {
         {/* Instructions */}
         {!runState.isRunning && !runState.route.length && (
           <div className="mt-6 text-center">
-            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
-              <h3 className="text-lg font-medium text-blue-900 dark:text-blue-100 mb-2">
+            <div className="bg-green-50 dark:bg-green-900/20 border border-neon-green/30 dark:border-neon-green/50 rounded-lg p-4 neon-glow">
+              <h3 className="text-lg font-medium text-green-900 dark:text-green-100 mb-2">
                 How to use
               </h3>
-              <p className="text-blue-700 dark:text-blue-200 text-sm">
+              <p className="text-green-700 dark:text-green-200 text-sm">
                 Click "Start Run" to begin tracking your route. Make sure location services are enabled in your browser.
                 Your path will be displayed on the map in real-time. Click "Stop Run" when finished to save your run data.
               </p>
