@@ -40,7 +40,7 @@ A modern, full-featured running tracker web application built with Next.js, Type
 
 1. **Clone or download the project**
    ```bash
-   cd running-tracker
+   cd running-tracker-web
    ```
 
 2. **Install dependencies**
