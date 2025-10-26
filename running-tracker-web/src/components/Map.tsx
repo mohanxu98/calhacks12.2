@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { RunState, LatLng } from '@/types'
+import { RunState, LatLng, DrawnShape } from '@/types'
 
 // Fix for default markers in Leaflet with Next.js
 delete (L.Icon.Default.prototype as any)._getIconUrl
@@ -18,14 +18,16 @@ interface MapProps {
   zoom: number
   runState: RunState
   onPositionUpdate: (position: LatLng) => void
+  drawnShapes?: DrawnShape[]
 }
 
-export default function Map({ center, zoom, runState, onPositionUpdate }: MapProps) {
+export default function Map({ center, zoom, runState, onPositionUpdate, drawnShapes = [] }: MapProps) {
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<L.Map | null>(null)
   const routeLineRef = useRef<L.Polyline | null>(null)
   const positionMarkerRef = useRef<L.Marker | null>(null)
   const watchIdRef = useRef<number | null>(null)
+  const shapeLayersRef = useRef<L.LayerGroup | null>(null)
 
   // Initialize map
   useEffect(() => {
@@ -38,6 +40,9 @@ export default function Map({ center, zoom, runState, onPositionUpdate }: MapPro
       attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       maxZoom: 19,
     }).addTo(map)
+
+    // Create layer group for shapes
+    shapeLayersRef.current = L.layerGroup().addTo(map)
 
     mapInstanceRef.current = map
 
@@ -129,6 +134,80 @@ export default function Map({ center, zoom, runState, onPositionUpdate }: MapPro
       }
     }
   }, [runState.isRunning, runState.route, onPositionUpdate, zoom])
+
+  // Render drawn shapes
+  useEffect(() => {
+    if (!mapInstanceRef.current || !shapeLayersRef.current) return
+
+    // Clear existing shapes
+    shapeLayersRef.current.clearLayers()
+    console.log('Map: Cleared layers, rendering', drawnShapes.length, 'shapes')
+
+    // Add new shapes
+    drawnShapes.forEach(shape => {
+      const latLngs = shape.points.map(point => [point.lat, point.lng] as [number, number])
+      
+      let layer: L.Layer
+      
+      if (shape.type === 'polygon' && shape.points.length >= 3) {
+        layer = L.polygon(latLngs, {
+          color: shape.color || '#3b82f6',
+          weight: 3,
+          opacity: 0.8,
+          fillColor: shape.color || '#3b82f6',
+          fillOpacity: 0.2
+        })
+      } else if (shape.type === 'freehand' && shape.points.length >= 2) {
+        layer = L.polyline(latLngs, {
+          color: shape.color || '#3b82f6',
+          weight: 3,
+          opacity: 0.8
+        })
+      } else if (shape.type === 'rectangle' && shape.points.length >= 2) {
+        const start = shape.points[0]
+        const end = shape.points[1]
+        const bounds = L.latLngBounds([start.lat, start.lng], [end.lat, end.lng])
+        layer = L.rectangle(bounds, {
+          color: shape.color || '#3b82f6',
+          weight: 3,
+          opacity: 0.8,
+          fillColor: shape.color || '#3b82f6',
+          fillOpacity: 0.2
+        })
+      } else if (shape.type === 'circle' && shape.points.length >= 2) {
+        const start = shape.points[0]
+        const end = shape.points[1]
+        const radius = mapInstanceRef.current!.distance(
+          [start.lat, start.lng],
+          [end.lat, end.lng]
+        )
+        layer = L.circle([start.lat, start.lng], {
+          radius,
+          color: shape.color || '#3b82f6',
+          weight: 3,
+          opacity: 0.8,
+          fillColor: shape.color || '#3b82f6',
+          fillOpacity: 0.2
+        })
+      } else {
+        return // Skip invalid shapes
+      }
+
+      // Add popup with shape info
+      layer.bindPopup(`
+        <div>
+          <strong>${shape.type.charAt(0).toUpperCase() + shape.type.slice(1)} Route</strong><br>
+          Points: ${shape.points.length}<br>
+          ${shape.name ? `Name: ${shape.name}<br>` : ''}
+          <button onclick="navigator.clipboard.writeText('${JSON.stringify(shape.points)}')">
+            Copy Coordinates
+          </button>
+        </div>
+      `)
+
+      shapeLayersRef.current!.addLayer(layer)
+    })
+  }, [drawnShapes])
 
   // Clean up markers and lines when component unmounts
   useEffect(() => {

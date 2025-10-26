@@ -5,8 +5,9 @@ import dynamic from 'next/dynamic'
 import { RunControls } from '@/components/RunControls'
 import { RunStats } from '@/components/RunStats'
 import { useTheme } from '@/components/ThemeProvider'
-import { RunState, LatLng } from '@/types'
-import { saveRun } from '@/lib/storage'
+import ShapeDrawer from '@/components/ShapeDrawer'
+import { RunState, LatLng, DrawnShape } from '@/types'
+import { saveRun, getShapes, saveShapes, deleteShape as deleteStoredShape } from '@/lib/storage'
 
 // Dynamically import the map component to avoid SSR issues with Leaflet
 const Map = dynamic(() => import('@/components/Map'), {
@@ -48,21 +49,134 @@ export default function Home() {
   })
 
   const [userLocation, setUserLocation] = useState<LatLng | null>(null)
+  const [drawnShapes, setDrawnShapes] = useState<DrawnShape[]>([])
+  const [locationError, setLocationError] = useState<string | null>(null)
+  const [isLoadingLocation, setIsLoadingLocation] = useState(true)
+
+  // Load saved shapes on mount
+  useEffect(() => {
+    const savedShapes = getShapes()
+    setDrawnShapes(savedShapes)
+  }, [])
 
   // Get user's current location on mount
   useEffect(() => {
+    const getLocation = () => {
+      if (!navigator.geolocation) {
+        setLocationError('Geolocation is not supported by this browser')
+        setIsLoadingLocation(false)
+        return
+      }
+
+      setIsLoadingLocation(true)
+      setLocationError(null)
+
+      const options: PositionOptions = {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 300000 // 5 minutes
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const { latitude, longitude } = position.coords
+          setUserLocation({ lat: latitude, lng: longitude })
+          setLocationError(null)
+          setIsLoadingLocation(false)
+        },
+        (error) => {
+          console.error('Error getting location:', error)
+          let errorMessage = 'Unable to get your location. '
+          
+          switch (error.code) {
+            case error.PERMISSION_DENIED:
+              errorMessage += 'Please allow location access in your browser settings.'
+              break
+            case error.POSITION_UNAVAILABLE:
+              errorMessage += 'Location information is unavailable.'
+              break
+            case error.TIMEOUT:
+              errorMessage += 'Location request timed out. Please try again.'
+              break
+            default:
+              errorMessage += 'An unknown error occurred.'
+              break
+          }
+          
+          setLocationError(errorMessage)
+          setIsLoadingLocation(false)
+        },
+        options
+      )
+    }
+
+    getLocation()
+  }, [])
+
+  // Retry location function
+  const retryLocation = () => {
+    setLocationError(null)
+    setIsLoadingLocation(true)
+    
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
           const { latitude, longitude } = position.coords
           setUserLocation({ lat: latitude, lng: longitude })
+          setLocationError(null)
+          setIsLoadingLocation(false)
         },
         (error) => {
-          console.error('Error getting location:', error)
+          console.error('Error getting location on retry:', error)
+          setLocationError('Failed to get location. Please check your browser settings and try again.')
+          setIsLoadingLocation(false)
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 15000,
+          maximumAge: 0
         }
       )
     }
-  }, [])
+  }
+
+  // Use default location as fallback
+  const useDefaultLocation = () => {
+    // Default to San Francisco coordinates
+    setUserLocation({ lat: 37.7749, lng: -122.4194 })
+    setLocationError(null)
+    setIsLoadingLocation(false)
+  }
+
+  // Manual location input
+  const [showManualLocation, setShowManualLocation] = useState(false)
+  const [manualLat, setManualLat] = useState('')
+  const [manualLng, setManualLng] = useState('')
+
+  const useManualLocation = () => {
+    const lat = parseFloat(manualLat)
+    const lng = parseFloat(manualLng)
+    
+    if (isNaN(lat) || isNaN(lng)) {
+      setLocationError('Please enter valid latitude and longitude values')
+      return
+    }
+    
+    if (lat < -90 || lat > 90) {
+      setLocationError('Latitude must be between -90 and 90')
+      return
+    }
+    
+    if (lng < -180 || lng > 180) {
+      setLocationError('Longitude must be between -180 and 180')
+      return
+    }
+    
+    setUserLocation({ lat, lng })
+    setLocationError(null)
+    setIsLoadingLocation(false)
+    setShowManualLocation(false)
+  }
 
   // Update elapsed time every second when running
   useEffect(() => {
@@ -140,6 +254,31 @@ export default function Home() {
     }
   }
 
+  const handleShapeComplete = (shape: DrawnShape) => {
+    setDrawnShapes(prev => {
+      const updatedShapes = [...prev, shape]
+      saveShapes(updatedShapes)
+      return updatedShapes
+    })
+  }
+
+  const handleShapeUpdate = (shape: DrawnShape) => {
+    setDrawnShapes(prev => {
+      const updatedShapes = prev.map(s => s.id === shape.id ? shape : s)
+      saveShapes(updatedShapes)
+      return updatedShapes
+    })
+  }
+
+  const handleShapeDelete = (shapeId: string) => {
+    setDrawnShapes(prev => {
+      const updatedShapes = prev.filter(s => s.id !== shapeId)
+      saveShapes(updatedShapes)
+      deleteStoredShape(shapeId)
+      return updatedShapes
+    })
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="max-w-7xl mx-auto px-4 py-6">
@@ -173,22 +312,148 @@ export default function Home() {
           </div>
         )}
 
+        {/* Shape Drawer */}
+        {userLocation && (
+          <div className="mb-6">
+            <ShapeDrawer
+              onShapeComplete={handleShapeComplete}
+              onShapeUpdate={handleShapeUpdate}
+              onShapeDelete={handleShapeDelete}
+              initialShapes={drawnShapes}
+              userLocation={userLocation}
+            />
+          </div>
+        )}
+
+        {/* Location Status */}
+        {isLoadingLocation && (
+          <div className="mb-6">
+            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-300 dark:border-blue-700 rounded-lg p-4">
+              <div className="flex items-center">
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600 mr-3"></div>
+                <div>
+                  <h3 className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                    Getting your location...
+                  </h3>
+                  <p className="text-sm text-blue-700 dark:text-blue-200 mt-1">
+                    Please allow location access in your browser
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {locationError && (
+          <div className="mb-6">
+            <div className="bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-700 rounded-lg p-4">
+              <div className="flex items-start">
+                <div className="flex-shrink-0">
+                  <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="ml-3 flex-1">
+                  <h3 className="text-sm font-medium text-red-900 dark:text-red-100">
+                    Location Error
+                  </h3>
+                  <p className="text-sm text-red-700 dark:text-red-200 mt-1">
+                    {locationError}
+                  </p>
+                  <div className="mt-3 flex gap-2 flex-wrap">
+                    <button
+                      onClick={retryLocation}
+                      className="px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition-colors"
+                    >
+                      Try Again
+                    </button>
+                    <button
+                      onClick={useDefaultLocation}
+                      className="px-3 py-1 bg-gray-600 text-white text-sm rounded hover:bg-gray-700 transition-colors"
+                    >
+                      Use Default Location
+                    </button>
+                    <button
+                      onClick={() => setShowManualLocation(!showManualLocation)}
+                      className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors"
+                    >
+                      Enter Location Manually
+                    </button>
+                  </div>
+                  
+                  {showManualLocation && (
+                    <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-800 rounded border">
+                      <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
+                        Enter Your Location
+                      </h4>
+                      <div className="flex gap-2 mb-2">
+                        <div>
+                          <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">
+                            Latitude
+                          </label>
+                          <input
+                            type="number"
+                            value={manualLat}
+                            onChange={(e) => setManualLat(e.target.value)}
+                            placeholder="37.7749"
+                            step="any"
+                            className="w-24 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">
+                            Longitude
+                          </label>
+                          <input
+                            type="number"
+                            value={manualLng}
+                            onChange={(e) => setManualLng(e.target.value)}
+                            placeholder="-122.4194"
+                            step="any"
+                            className="w-24 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={useManualLocation}
+                          className="px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700 transition-colors"
+                        >
+                          Use This Location
+                        </button>
+                        <button
+                          onClick={() => setShowManualLocation(false)}
+                          className="px-3 py-1 bg-gray-500 text-white text-sm rounded hover:bg-gray-600 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Map */}
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg neon-glow overflow-hidden">
           <div className="h-96 relative">
             {userLocation ? (
               <Map
+                key={`map-${drawnShapes.length}-${drawnShapes.map(s => s.id).join(',')}`}
                 center={userLocation}
                 zoom={15}
                 runState={runState}
                 onPositionUpdate={handlePositionUpdate}
+                drawnShapes={drawnShapes}
               />
             ) : (
               <div className="w-full h-full flex items-center justify-center bg-gray-200 dark:bg-gray-700">
                 <div className="text-center">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-neon-green mx-auto mb-2"></div>
                   <p className="text-gray-600 dark:text-gray-400">
-                    Getting your location...
+                    {isLoadingLocation ? 'Getting your location...' : 'Location not available'}
                   </p>
                 </div>
               </div>
@@ -203,10 +468,20 @@ export default function Home() {
               <h3 className="text-lg font-medium text-green-900 dark:text-green-100 mb-2">
                 How to use
               </h3>
-              <p className="text-green-700 dark:text-green-200 text-sm">
-                Click "Start Run" to begin tracking your route. Make sure location services are enabled in your browser.
-                Your path will be displayed on the map in real-time. Click "Stop Run" when finished to save your run data.
-              </p>
+              <div className="text-green-700 dark:text-green-200 text-sm space-y-2">
+                <p>
+                  <strong>Draw Routes:</strong> Use the shape drawing tool above to create custom running routes. 
+                  Choose from polygon, freehand, rectangle, or circle tools.
+                </p>
+                <p>
+                  <strong>Track Runs:</strong> Click "Start Run" to begin tracking your route. Make sure location services are enabled in your browser.
+                  Your path will be displayed on the map in real-time. Click "Stop Run" when finished to save your run data.
+                </p>
+                <p>
+                  <strong>Location Issues:</strong> If the app can't get your location, try refreshing the page, 
+                  check your browser's location permissions, or use the manual location input option.
+                </p>
+              </div>
             </div>
           </div>
         )}

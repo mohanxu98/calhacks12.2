@@ -31,3 +31,11 @@ export interface RunState {
   startTime: Date | null;
   elapsedTime: number; // in milliseconds
 }
+
+export interface DrawnShape {
+  id: string;
+  type: 'polygon' | 'freehand' | 'rectangle' | 'circle';
+  points: LatLng[];
+  name?: string;
+  color?: string;
+}
