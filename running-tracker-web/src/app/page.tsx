@@ -2,12 +2,31 @@
 
 import { useState, useEffect } from 'react'
 import dynamic from 'next/dynamic'
+import Link from 'next/link'
 import { RunControls } from '@/components/RunControls'
 import { RunStats } from '@/components/RunStats'
 import { useTheme } from '@/components/ThemeProvider'
 import ShapeDrawer from '@/components/ShapeDrawer'
 import { RunState, LatLng, DrawnShape } from '@/types'
 import { saveRun, getShapes, saveShapes, deleteShape as deleteStoredShape } from '@/lib/storage'
+
+// Declare Google Maps types
+declare global {
+  interface Window {
+    google: any
+  }
+}
+
+// Load Google Maps script for the main page
+const loadGoogleMaps = () => {
+  if (typeof window !== 'undefined' && !window.google) {
+    const script = document.createElement('script')
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}&libraries=geometry`
+    script.async = true
+    script.defer = true
+    document.head.appendChild(script)
+  }
+}
 
 // Dynamically import the map component to avoid SSR issues with Leaflet
 const Map = dynamic(() => import('@/components/Map'), {
@@ -53,8 +72,9 @@ export default function Home() {
   const [locationError, setLocationError] = useState<string | null>(null)
   const [isLoadingLocation, setIsLoadingLocation] = useState(true)
 
-  // Load saved shapes on mount
+  // Load Google Maps and saved shapes on mount
   useEffect(() => {
+    loadGoogleMaps()
     const savedShapes = getShapes()
     setDrawnShapes(savedShapes)
   }, [])
@@ -73,8 +93,8 @@ export default function Home() {
 
       const options: PositionOptions = {
         enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 300000 // 5 minutes
+        timeout: 15000, // Increased timeout
+        maximumAge: 60000 // 1 minute cache
       }
 
       navigator.geolocation.getCurrentPosition(
@@ -87,23 +107,28 @@ export default function Home() {
         (error) => {
           console.error('Error getting location:', error)
           let errorMessage = 'Unable to get your location. '
+          let troubleshooting = ''
           
           switch (error.code) {
             case error.PERMISSION_DENIED:
-              errorMessage += 'Please allow location access in your browser settings.'
+              errorMessage += 'Location access was denied.'
+              troubleshooting = 'Click the location icon in your browser address bar and allow location access, or check your browser settings.'
               break
             case error.POSITION_UNAVAILABLE:
               errorMessage += 'Location information is unavailable.'
+              troubleshooting = 'Make sure you have a good internet connection and GPS is enabled on your device.'
               break
             case error.TIMEOUT:
-              errorMessage += 'Location request timed out. Please try again.'
+              errorMessage += 'Location request timed out.'
+              troubleshooting = 'Try refreshing the page or check if you have a VPN/privacy extension blocking location access.'
               break
             default:
               errorMessage += 'An unknown error occurred.'
+              troubleshooting = 'Try refreshing the page or using a different browser.'
               break
           }
           
-          setLocationError(errorMessage)
+          setLocationError(errorMessage + (troubleshooting ? ` ${troubleshooting}` : ''))
           setIsLoadingLocation(false)
         },
         options
@@ -113,12 +138,13 @@ export default function Home() {
     getLocation()
   }, [])
 
-  // Retry location function
+  // Retry location function with fallback options
   const retryLocation = () => {
     setLocationError(null)
     setIsLoadingLocation(true)
     
     if (navigator.geolocation) {
+      // Try high accuracy first
       navigator.geolocation.getCurrentPosition(
         (position) => {
           const { latitude, longitude } = position.coords
@@ -127,9 +153,26 @@ export default function Home() {
           setIsLoadingLocation(false)
         },
         (error) => {
-          console.error('Error getting location on retry:', error)
-          setLocationError('Failed to get location. Please check your browser settings and try again.')
-          setIsLoadingLocation(false)
+          console.error('High accuracy failed, trying low accuracy:', error)
+          // Fallback to low accuracy
+          navigator.geolocation.getCurrentPosition(
+            (position) => {
+              const { latitude, longitude } = position.coords
+              setUserLocation({ lat: latitude, lng: longitude })
+              setLocationError(null)
+              setIsLoadingLocation(false)
+            },
+            (fallbackError) => {
+              console.error('All location methods failed:', fallbackError)
+              setLocationError('All location methods failed. Please check your browser settings, disable VPN/privacy extensions, or use manual location input.')
+              setIsLoadingLocation(false)
+            },
+            {
+              enableHighAccuracy: false, // Lower accuracy fallback
+              timeout: 20000,
+              maximumAge: 300000 // 5 minutes cache
+            }
+          )
         },
         {
           enableHighAccuracy: true,
@@ -284,9 +327,25 @@ export default function Home() {
       <div className="max-w-7xl mx-auto px-4 py-6">
         {/* Header */}
         <div className="mb-6">
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
-            <span className="neon-text">Running Tracker</span>
-          </h1>
+                  <div className="flex justify-between items-center mb-4">
+                    <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
+                      <span className="neon-text">Running Tracker</span>
+                    </h1>
+                    <div className="space-x-2">
+                      <Link
+                        href="/landing"
+                        className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors"
+                      >
+                        Home
+                      </Link>
+                      <Link
+                        href="/route-planner"
+                        className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+                      >
+                        Route Planner
+                      </Link>
+                    </div>
+                  </div>
           <p className="text-gray-600 dark:text-gray-400 mt-1">
             Track your runs with GPS and view your progress
           </p>
@@ -447,6 +506,7 @@ export default function Home() {
                 runState={runState}
                 onPositionUpdate={handlePositionUpdate}
                 drawnShapes={drawnShapes}
+                userLocation={userLocation}
               />
             ) : (
               <div className="w-full h-full flex items-center justify-center bg-gray-200 dark:bg-gray-700">
@@ -478,9 +538,15 @@ export default function Home() {
                   Your path will be displayed on the map in real-time. Click "Stop Run" when finished to save your run data.
                 </p>
                 <p>
-                  <strong>Location Issues:</strong> If the app can't get your location, try refreshing the page, 
-                  check your browser's location permissions, or use the manual location input option.
+                  <strong>Location Issues:</strong> If the app can't get your location, try these solutions:
                 </p>
+                <ul className="text-sm text-green-700 dark:text-green-200 mt-2 space-y-1 list-disc list-inside">
+                  <li>Click the location icon in your browser address bar and allow access</li>
+                  <li>Check your browser's location permissions in settings</li>
+                  <li>Disable VPN or privacy extensions temporarily</li>
+                  <li>Try refreshing the page or using a different browser</li>
+                  <li>Use the manual location input as a fallback</li>
+                </ul>
               </div>
             </div>
           </div>

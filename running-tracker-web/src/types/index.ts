@@ -38,4 +38,5 @@ export interface DrawnShape {
   points: LatLng[];
   name?: string;
   color?: string;
+  targetDistance?: number;
 }

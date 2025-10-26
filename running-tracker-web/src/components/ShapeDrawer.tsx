@@ -2,6 +2,15 @@
 
 import { useRef, useState, useEffect, useCallback } from 'react'
 import { LatLng } from '@/types'
+import Directions from './Directions'
+import { getShapeRoute, getDetailedRouteInfo } from '@/lib/googleMapsRouting'
+
+// Declare Google Maps types
+declare global {
+  interface Window {
+    google: any
+  }
+}
 
 export interface DrawnShape {
   id: string
@@ -42,47 +51,17 @@ export default function ShapeDrawer({
   const [drawMode, setDrawMode] = useState<'polygon' | 'freehand' | 'rectangle' | 'circle'>('polygon')
   const [startPoint, setStartPoint] = useState<{ x: number; y: number } | null>(null)
   const [targetDistance, setTargetDistance] = useState<number>(1000) // Default 1km in meters
-  const [currentDistance, setCurrentDistance] = useState<number>(0)
-  const [scaleFactor, setScaleFactor] = useState<number>(1)
+  const [showDirections, setShowDirections] = useState<DrawnShape | null>(null)
+  const [isCalculatingRoute, setIsCalculatingRoute] = useState(false)
+  const [routeDistances, setRouteDistances] = useState<Map<string, number>>(new Map())
+  const [isGoogleMapsLoaded, setIsGoogleMapsLoaded] = useState(false)
 
-  // Calculate distance between two points using Haversine formula
-  const calculateDistance = useCallback((point1: LatLng, point2: LatLng): number => {
-    const R = 6371e3 // Earth's radius in meters
-    const φ1 = (point1.lat * Math.PI) / 180
-    const φ2 = (point2.lat * Math.PI) / 180
-    const Δφ = ((point2.lat - point1.lat) * Math.PI) / 180
-    const Δλ = ((point2.lng - point1.lng) * Math.PI) / 180
 
-    const a =
-      Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-
-    return R * c
-  }, [])
-
-  // Calculate total distance of a shape
-  const calculateShapeDistance = useCallback((shape: DrawnShape): number => {
-    if (shape.points.length < 2) return 0
-    
-    let totalDistance = 0
-    for (let i = 1; i < shape.points.length; i++) {
-      totalDistance += calculateDistance(shape.points[i - 1], shape.points[i])
-    }
-    
-    // For polygons, add distance from last point back to first
-    if (shape.type === 'polygon' && shape.points.length > 2) {
-      totalDistance += calculateDistance(shape.points[shape.points.length - 1], shape.points[0])
-    }
-    
-    return totalDistance
-  }, [calculateDistance])
-
-  // Convert canvas coordinates to lat/lng based on user location with scaling
+  // Convert canvas coordinates to lat/lng based on user location (without scaling during drawing)
   const canvasToLatLng = useCallback((x: number, y: number): LatLng => {
     // Convert pixel coordinates to lat/lng offsets around user location
-    // Apply scale factor to adjust for target distance
-    const metersPerPixel = 1 * scaleFactor // Scale based on target distance
+    // Don't apply scaling during drawing - we'll scale after completion
+    const metersPerPixel = 1 // 1 meter per pixel
     const latOffset = (y - height / 2) * metersPerPixel / 111320 // Convert meters to degrees latitude
     const lngOffset = (x - width / 2) * metersPerPixel / (111320 * Math.cos(userLocation.lat * Math.PI / 180)) // Convert meters to degrees longitude
     
@@ -90,19 +69,19 @@ export default function ShapeDrawer({
       lat: userLocation.lat + latOffset,
       lng: userLocation.lng + lngOffset
     }
-  }, [width, height, userLocation, scaleFactor])
+  }, [width, height, userLocation])
 
   // Convert lat/lng to canvas coordinates based on user location with scaling
   const latLngToCanvas = useCallback((lat: number, lng: number): { x: number; y: number } => {
-    const metersPerPixel = 1 * scaleFactor // Apply scale factor
+    const metersPerPixel = 1 // 1 meter per pixel
     const latOffset = (lat - userLocation.lat) * 111320 // Convert degrees to meters
     const lngOffset = (lng - userLocation.lng) * (111320 * Math.cos(userLocation.lat * Math.PI / 180)) // Convert degrees to meters
     
     const x = width / 2 + lngOffset / metersPerPixel
     const y = height / 2 + latOffset / metersPerPixel
     
-    return { x, y }
-  }, [width, height, userLocation, scaleFactor])
+  return { x, y }
+}, [width, height, userLocation])
 
   // Draw all shapes on canvas
   const drawShapes = useCallback(() => {
@@ -227,7 +206,8 @@ export default function ShapeDrawer({
         const newShape: DrawnShape = {
           id: Date.now().toString(),
           type: 'polygon',
-          points: [canvasToLatLng(x, y)]
+          points: [canvasToLatLng(x, y)],
+          targetDistance
         }
         setCurrentShape(newShape)
         setIsDrawing(true)
@@ -235,7 +215,8 @@ export default function ShapeDrawer({
         // Add point to existing polygon
         const updatedShape = {
           ...currentShape,
-          points: [...currentShape.points, canvasToLatLng(x, y)]
+          points: [...currentShape.points, canvasToLatLng(x, y)],
+          targetDistance
         }
         setCurrentShape(updatedShape)
         onShapeUpdate?.(updatedShape)
@@ -244,7 +225,8 @@ export default function ShapeDrawer({
       const newShape: DrawnShape = {
         id: Date.now().toString(),
         type: 'freehand',
-        points: [canvasToLatLng(x, y)]
+        points: [canvasToLatLng(x, y)],
+        targetDistance
       }
       setCurrentShape(newShape)
       setIsDrawing(true)
@@ -253,7 +235,8 @@ export default function ShapeDrawer({
         const newShape: DrawnShape = {
           id: Date.now().toString(),
           type: drawMode,
-          points: [canvasToLatLng(x, y)]
+          points: [canvasToLatLng(x, y)],
+          targetDistance
         }
         setCurrentShape(newShape)
         setStartPoint({ x, y })
@@ -276,14 +259,16 @@ export default function ShapeDrawer({
     if (drawMode === 'freehand') {
       const updatedShape = {
         ...currentShape,
-        points: [...currentShape.points, canvasToLatLng(x, y)]
+        points: [...currentShape.points, canvasToLatLng(x, y)],
+        targetDistance
       }
       setCurrentShape(updatedShape)
       onShapeUpdate?.(updatedShape)
     } else if ((drawMode === 'rectangle' || drawMode === 'circle') && startPoint) {
       const updatedShape = {
         ...currentShape,
-        points: [canvasToLatLng(startPoint.x, startPoint.y), canvasToLatLng(x, y)]
+        points: [canvasToLatLng(startPoint.x, startPoint.y), canvasToLatLng(x, y)],
+        targetDistance
       }
       setCurrentShape(updatedShape)
       onShapeUpdate?.(updatedShape)
@@ -301,8 +286,7 @@ export default function ShapeDrawer({
       onShapeComplete(completedShape)
       setCurrentShape(null)
       setIsDrawing(false)
-      // Auto-scale to target distance
-      setTimeout(() => autoScaleCurrentShape(), 100)
+      // Manual scaling only - use Auto-Scale button
     } else if (drawMode === 'rectangle' || drawMode === 'circle') {
       // Complete rectangle/circle drawing
       if (currentShape.points.length >= 2) {
@@ -326,8 +310,7 @@ export default function ShapeDrawer({
       onShapeComplete(completedShape)
       setCurrentShape(null)
       setIsDrawing(false)
-      // Auto-scale to target distance
-      setTimeout(() => autoScaleCurrentShape(), 100)
+      // Manual scaling only - use Auto-Scale button
     }
   }
 
@@ -350,35 +333,58 @@ export default function ShapeDrawer({
     onShapeDelete?.(shapeId)
   }
 
+  // Calculate Google Maps route distance for a shape
+  const calculateRouteDistance = useCallback(async (shape: DrawnShape) => {
+    if (shape.points.length < 2) return 0
+
+    try {
+      const routeResult = await getShapeRoute(shape.points)
+      return routeResult?.distance || 0
+    } catch (error) {
+      console.error('Error calculating route distance:', error)
+      return 0
+    }
+  }, [])
+
+  // Calculate route distances for all shapes
+  const calculateAllRouteDistances = useCallback(async () => {
+    if (shapes.length === 0) return
+
+    setIsCalculatingRoute(true)
+    const newDistances = new Map<string, number>()
+
+    for (const shape of shapes) {
+      const distance = await calculateRouteDistance(shape)
+      newDistances.set(shape.id, distance)
+    }
+
+    setRouteDistances(newDistances)
+    setIsCalculatingRoute(false)
+  }, [shapes, calculateRouteDistance])
+
+  // Check if Google Maps is loaded
+  useEffect(() => {
+    const checkGoogleMaps = () => {
+      if (typeof window !== 'undefined' && window.google && window.google.maps) {
+        setIsGoogleMapsLoaded(true)
+      } else {
+        setTimeout(checkGoogleMaps, 500)
+      }
+    }
+    checkGoogleMaps()
+  }, [])
+
+  // Calculate route distances when shapes change
+  useEffect(() => {
+    if (shapes.length > 0 && isGoogleMapsLoaded) {
+      calculateAllRouteDistances()
+    }
+  }, [shapes, calculateAllRouteDistances, isGoogleMapsLoaded])
+
   // Handle distance input change
   const handleDistanceChange = (distance: number) => {
     setTargetDistance(distance)
-    // Auto-scale existing shapes to match target distance
-    if (shapes.length > 0) {
-      const totalCurrentDistance = shapes.reduce((sum, shape) => sum + calculateShapeDistance(shape), 0)
-      if (totalCurrentDistance > 0) {
-        const newScaleFactor = distance / totalCurrentDistance
-        setScaleFactor(newScaleFactor)
-      }
-    }
   }
-
-  // Auto-scale current shape to match target distance
-  const autoScaleCurrentShape = useCallback(() => {
-    if (currentShape && currentShape.points.length > 1) {
-      const shapeDistance = calculateShapeDistance(currentShape)
-      if (shapeDistance > 0) {
-        const newScaleFactor = targetDistance / shapeDistance
-        setScaleFactor(newScaleFactor)
-      }
-    }
-  }, [currentShape, targetDistance, calculateShapeDistance])
-
-  // Update current distance when shapes change
-  useEffect(() => {
-    const totalDistance = shapes.reduce((sum, shape) => sum + calculateShapeDistance(shape), 0)
-    setCurrentDistance(totalDistance)
-  }, [shapes, calculateShapeDistance])
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4">
@@ -407,19 +413,36 @@ export default function ShapeDrawer({
             />
             <span className="text-sm text-gray-600 dark:text-gray-400">meters</span>
           </div>
-          <div className="flex items-center gap-4 text-sm">
-            <span className="text-gray-600 dark:text-gray-400">
-              Current: {Math.round(currentDistance)}m
-            </span>
-            <span className="text-gray-600 dark:text-gray-400">
-              Scale: {scaleFactor.toFixed(2)}x
-            </span>
-            {Math.abs(currentDistance - targetDistance) < 50 && currentDistance > 0 && (
-              <span className="text-green-600 dark:text-green-400 font-medium">
-                ✓ Distance matched!
-              </span>
-            )}
-          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            The shape will be scaled to this distance when displayed on the map
+          </p>
+          
+          {/* Route Distance Info */}
+          {shapes.length > 0 && (
+            <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900 rounded-lg">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                  Google Maps Route Distance:
+                </span>
+                {!isGoogleMapsLoaded ? (
+                  <span className="text-sm text-yellow-600 dark:text-yellow-300">Loading Google Maps...</span>
+                ) : isCalculatingRoute ? (
+                  <span className="text-sm text-blue-600 dark:text-blue-300">Calculating...</span>
+                ) : (
+                  <span className="text-sm text-blue-600 dark:text-blue-300">
+                    {Array.from(routeDistances.values()).reduce((sum, dist) => sum + dist, 0).toFixed(0)}m
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={calculateAllRouteDistances}
+                disabled={isCalculatingRoute || !isGoogleMapsLoaded}
+                className="text-xs px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+              >
+                {!isGoogleMapsLoaded ? 'Loading...' : isCalculatingRoute ? 'Calculating...' : 'Recalculate Routes'}
+              </button>
+            </div>
+          )}
         </div>
         
         {/* Drawing mode selector */}
@@ -456,7 +479,7 @@ export default function ShapeDrawer({
 
         {/* Scale indicator */}
         <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-          Scale: 1 pixel = {Math.round(1 * scaleFactor)}m | Canvas: {Math.round(width * scaleFactor)}m × {Math.round(height * scaleFactor)}m
+          Scale: 1 pixel = 1m | Canvas: {width}m × {height}m
         </div>
 
         {/* Controls */}
@@ -466,13 +489,6 @@ export default function ShapeDrawer({
             className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
           >
             Clear All
-          </button>
-          <button
-            onClick={autoScaleCurrentShape}
-            disabled={!currentShape || currentShape.points.length < 2}
-            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
-          >
-            Auto-Scale
           </button>
           <div className="text-sm text-gray-600 dark:text-gray-400 flex items-center">
             {shapes.length} shape{shapes.length !== 1 ? 's' : ''} drawn
@@ -501,16 +517,33 @@ export default function ShapeDrawer({
                     {shape.type} ({shape.points.length} points)
                   </span>
                 </div>
-                <button
-                  onClick={() => deleteShape(shape.id)}
-                  className="text-red-500 hover:text-red-700 text-sm"
-                >
-                  Delete
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowDirections(shape)}
+                    className="text-blue-500 hover:text-blue-700 text-sm px-2 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                  >
+                    Directions
+                  </button>
+                  <button
+                    onClick={() => deleteShape(shape.id)}
+                    className="text-red-500 hover:text-red-700 text-sm"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
             ))}
           </div>
         </div>
+      )}
+
+      {/* Directions Modal */}
+      {showDirections && (
+        <Directions
+          shape={showDirections}
+          userLocation={userLocation}
+          onClose={() => setShowDirections(null)}
+        />
       )}
     </div>
   )
